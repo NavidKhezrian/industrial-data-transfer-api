@@ -1,0 +1,24 @@
+[project]
+name = "factory-agent"
+version = "0.1.0"
+description = "Factory-side SQLite export agent for industrial data transfer"
+requires-python = ">=3.11"
+dependencies = [
+    "pandas",
+    "pyarrow",
+    "pyyaml",
+    "requests",
+    "pydantic",
+    "fastapi",
+    "uvicorn[standard]",
+]
+
+[dependency-groups]
+dev = [
+    "pytest",
+    "httpx",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]

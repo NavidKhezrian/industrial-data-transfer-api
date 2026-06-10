@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Data Transfer Console</title>
+  <link rel="stylesheet" href="/ui-static/ui.css" />
+</head>
+
+<body>
+  <div id="authView" class="shell">
+    <div class="auth-card">
+      <h1>Data Transfer Console</h1>
+      <p class="sub">Enter your bearer token to access the local Receiver UI.</p><label>Bearer token</label><input
+        id="apiKeyInput" type="password" placeholder="Enter bearer token"
+        onkeydown="if(event.key==='Enter') validateKey()" /><button onclick="validateKey()">Unlock console</button>
+      <p id="authError" class="error small"></p>
+    </div>
+  </div>
+  <div id="appView" class="shell hidden">
+    <div class="topbar">
+      <div>
+        <h1>Data Transfer Console</h1>
+        <p class="sub">Manage raw, schema-aware data transfer from the Factory Agent to the local Receiver.</p>
+        <div class="status-row"><span class="badge">Receiver: <b id="receiverStatus">Checking...</b></span><span
+            class="badge">Factory Agent: <b id="agentStatus">Checking...</b></span><span class="badge">Source tables: <b
+              id="sourceTableCount">-</b></span><span class="badge">Stored tables: <b id="tableCount">-</b></span></div>
+      </div>
+      <div class="button-row"><button class="secondary" onclick="reloadOptions()">Reload status</button><button
+          class="secondary" onclick="lockPanel()">Lock</button></div>
+    </div>
+    <div id="statusNotice" class="hidden"></div>
+
+    <div class="grid">
+      <div class="panel request-panel">
+        <h2>Request</h2><label>Operation</label><select id="mode" onchange="onModeChange()">
+          <option value="new_data">Sync New Data</option>
+          <option value="full_database">Full Database</option>
+          <option value="selected_tables_new_data">Sync Selected Tables</option>
+          <option value="selected_tables_full_snapshot">Full Refresh Selected Tables</option>
+          <option value="limited_query">Custom Query</option>
+          <option value="schema_only">Inspect Schema</option>
+        </select>
+        <p id="modeDescription" class="small"></p>
+        <div class="policy-card">
+          <h3>Execution policy</h3>
+          <div id="policyBox">
+            <p class="small">Choose an operation to see how it will run.</p>
+          </div>
+        </div>
+        <div id="selectedTablesPanel" class="result-card hidden">
+          <h3>Select tables</h3>
+          <div class="table-list" id="tables"></div>
+        </div>
+        <div id="limitedQueryPanel" class="result-card hidden">
+          <h3>Custom Query</h3>
+          <p class="small">Choose a table, select the columns to export, and add as many filters as needed. Time fields
+            show a time-range input. Other fields show value filters. All filters are combined with AND. Free-form SQL
+            is not accepted.</p><label>Table</label><select id="queryTable"
+            onchange="renderQueryColumns()"></select><label>Columns to export</label>
+          <div class="button-row"><button type="button" class="secondary small-btn"
+              onclick="setAllQueryColumns(true)">Select all</button><button type="button" class="secondary small-btn"
+              onclick="setAllQueryColumns(false)">Clear</button></div>
+          <div class="column-list" id="queryColumns"></div><label>Filters, optional</label>
+          <p class="small">Select a column for each filter. Date/time columns use start/end values; other columns use
+            operators and a value.</p>
+          <div id="filtersBox"></div><button type="button" class="secondary small-btn" onclick="addFilterRow()">Add
+            filter</button><label>Maximum matching rows</label><input id="queryLimit" type="number" min="1"
+            value="1000" />
+        </div>
+        <div id="limitPanel"><label>Maximum records per table, optional</label><input id="limit" type="number" min="1"
+            placeholder="for example 100000" /></div><button onclick="sendRequest()">Run operation</button>
+      </div>
+      <div class="panel result-panel">
+        <h2>Result</h2>
+        <div id="result">
+          <p class="small">No operation has been run yet.</p>
+        </div>
+      </div>
+      <div class="panel full">
+        <h2>Technical Details</h2><button class="secondary" onclick="toggleRaw()">Show / hide JSON</button>
+        <pre id="raw" class="hidden"></pre>
+      </div>
+    </div>
+  </div>
+  <script src="/ui-static/ui.js"></script>
+</body>
+
+</html>

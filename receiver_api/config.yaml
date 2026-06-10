@@ -1,0 +1,47 @@
+# Receiver API configuration
+# ------------------------------------------------------------
+# This single configuration file supports both local testing and
+# operational HTTP deployment.
+#
+# Local mode is active by default. For production, comment the local
+# values and uncomment the production examples below, then replace the
+# placeholder IP addresses and paths with your real values.
+#
+# Required environment variables, not stored in this file:
+#   RECEIVER_API_KEY       Token used by UI users and Factory Agent uploads
+#   FACTORY_AGENT_API_KEY  Token used by Receiver to call the Factory Agent
+#
+# Optional environment overrides:
+#   APP_ENV, RECEIVER_STORAGE_DIR, RECEIVER_METADATA_DB,
+#   FACTORY_AGENT_BASE_URL
+
+# ------------------------------------------------------------
+# Environment
+# local      = both services run on the same computer
+# production = Receiver and Factory Agent run on different computers
+# ------------------------------------------------------------
+environment: local
+# environment: production
+
+# ------------------------------------------------------------
+# Receiver storage
+# This is where accepted Parquet files and metadata are stored on the
+# Receiver computer.
+# ------------------------------------------------------------
+storage_dir: storage/raw_parquet
+metadata_db_path: storage/metadata.db
+# storage_dir: D:/DATA/industrial_transfer/raw_parquet
+# metadata_db_path: D:/DATA/industrial_transfer/metadata.db
+# storage_dir: /data/industrial_transfer/raw_parquet
+# metadata_db_path: /data/industrial_transfer/metadata.db
+
+# ------------------------------------------------------------
+# Factory Agent URL
+# Local: Agent runs on the same computer.
+# Production: replace this with the real Factory Agent IP or hostname.
+# Do not use localhost in production because localhost means the Receiver
+# computer itself, not the factory computer.
+# ------------------------------------------------------------
+factory_agent_base_url: http://localhost:9000
+# factory_agent_base_url: http://192.168.10.20:9000
+# factory_agent_base_url: http://factory-agent-hostname:9000

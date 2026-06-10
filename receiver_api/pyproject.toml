@@ -1,0 +1,25 @@
+[project]
+name = "receiver-api"
+version = "0.1.0"
+description = "Receiver-side API for industrial data transfer"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "pydantic",
+    "python-multipart",
+    "pyyaml",
+    "pandas",
+    "pyarrow",
+    "requests",
+]
+
+[dependency-groups]
+dev = [
+    "pytest",
+    "httpx",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]

@@ -46,7 +46,7 @@ api_base_url: http://localhost:8000
 # - large_file_transfer.full_snapshot_page_size for full snapshots
 # - large_file_transfer.incremental_page_size for incremental sync
 # ------------------------------------------------------------
-batch_max_records: 100000
+batch_max_records: 500000
 compression: zstd
 use_snapshot: true
 

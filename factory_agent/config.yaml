@@ -60,12 +60,12 @@ use_snapshot: true
 large_file_transfer:
   enabled: true
   full_snapshot_page_size: 100000
+  incremental_page_size: 100000
   upload_timeout_seconds: 600
   upload_retries: 3
   upload_retry_backoff_seconds: 5
   manifest_timeout_seconds: 120
   finalize_timeout_seconds: 120
-  incremental_page_size: 100000
 
 # ------------------------------------------------------------
 # Table selection

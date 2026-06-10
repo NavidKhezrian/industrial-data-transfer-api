@@ -13,32 +13,33 @@ from agent.config import AgentConfig
 from app_common.checksum import sha256_file
 from app_common.schemas import RawBatchMetadata, TableSchema
 
-
 _SAFE_PATH_RE = re.compile(r"[^A-Za-z0-9_.-]+")
 
 
-def safe_path_part(value: str) -> str:
+def safe_path_part(value: str, *, max_length: int = 160) -> str:
     """
     Convert a value into a safe folder/file path segment.
+
+    The result is intentionally readable so the generated Parquet files can be
+    inspected manually in Windows Explorer or VS Code.
     """
-    value = _SAFE_PATH_RE.sub("_", str(value).strip())
-    return value or "unknown"
+    value = _SAFE_PATH_RE.sub("_", str(value).strip()).strip("._-")
+    if not value:
+        value = "unknown"
+    return value[:max_length]
 
 
 def short_uuid(length: int = 12) -> str:
-    """
-    Return a short unique ID to keep Windows file paths short.
-    """
+    """Return a short unique ID to keep Windows file paths short."""
     return uuid.uuid4().hex[:length]
 
 
 def short_query_type(query_type: str) -> str:
-    """
-    Shorten query type for filenames.
-    """
+    """Shorten query type for filenames."""
     mapping = {
         "full_table_snapshot": "full",
         "incremental": "inc",
+        "limited_query": "query",
         "full_database_snapshot": "fulldb",
         "schema_only": "schema",
     }
@@ -57,41 +58,30 @@ def prepare_raw_dataframe(
     Add technical metadata columns to the exported raw dataframe.
 
     These columns do not interpret the factory data. They only make every row
-    traceable to a batch, factory, machine, and source table.
+    traceable to a batch, source, machine, and source table.
     """
     out = df.copy()
-
     exported_at = datetime.now(timezone.utc).isoformat()
-
     out.insert(0, "__batch_id", batch_id)
     out.insert(1, "__factory_id", factory_id)
     out.insert(2, "__machine_id", machine_id)
     out.insert(3, "__source_table", table_name)
     out.insert(4, "__exported_at", exported_at)
-
     return out
 
 
 def max_value_from_dataframe(df: pd.DataFrame, sync_key: str | None) -> Any:
-    """
-    Return the maximum value of the sync key from the exported dataframe.
-    """
+    """Return the maximum value of the sync key from the exported dataframe."""
     if not sync_key:
         return None
-
     if sync_key not in df.columns:
         return None
-
     if df.empty:
         return None
-
     series = df[sync_key].dropna()
-
     if series.empty:
         return None
-
     value = series.max()
-
     try:
         return value.item()
     except AttributeError:
@@ -108,17 +98,15 @@ def build_output_dir(
     """
     Build a short stable local output directory for one table/schema version.
 
-    Normal raw replication batches are stored under ``r``.
-    Limited-query results are stored under ``q`` so ad-hoc query outputs never
-    mix with, replace, or visually hide the normal replication history.
+    Normal raw replication batches are stored under ``r``. Limited-query results
+    are stored under ``q`` so ad-hoc query outputs never mix with normal
+    replication history.
     """
     factory_id_safe = safe_path_part(cfg.factory_id)
     table_name_safe = safe_path_part(table_name)
     category = "q" if query_type == "limited_query" else "r"
-
     return (
-        Path(cfg.output_dir)
-        .resolve()
+        Path(cfg.output_dir).resolve()
         / category
         / factory_id_safe
         / table_name_safe
@@ -127,30 +115,21 @@ def build_output_dir(
 
 
 def ensure_directory_exists(directory: Path) -> None:
-    """
-    Create a directory using pathlib and os.makedirs.
-    """
+    """Create a directory using pathlib and os.makedirs."""
     directory = Path(directory).resolve()
-
     directory.mkdir(parents=True, exist_ok=True)
     os.makedirs(str(directory), exist_ok=True)
-
     if not directory.exists():
         raise FileNotFoundError(f"Output directory was not created: {directory}")
-
     if not directory.is_dir():
         raise NotADirectoryError(f"Output path exists but is not a directory: {directory}")
 
 
 def verify_directory_is_writable(directory: Path) -> None:
-    """
-    Verify that the output directory is writable.
-    """
+    """Verify that the output directory is writable."""
     directory = Path(directory).resolve()
     ensure_directory_exists(directory)
-
     test_file = directory / f"w_{short_uuid()}.tmp"
-
     try:
         with open(test_file, "wb") as f:
             f.write(b"ok")
@@ -160,11 +139,8 @@ def verify_directory_is_writable(directory: Path) -> None:
 
 
 def assert_path_not_too_long(path: Path, max_length: int = 240) -> None:
-    """
-    Fail early with a clear error if the Windows path is too long.
-    """
+    """Fail early with a clear error if the Windows path is too long."""
     path_text = str(Path(path).resolve())
-
     if os.name == "nt" and len(path_text) > max_length:
         raise OSError(
             "The output file path is too long for Windows. "
@@ -187,7 +163,6 @@ def write_dataframe_to_parquet_file_handle(
     This avoids pandas/pyarrow path handling issues and keeps the error clearer.
     """
     parquet_path = Path(parquet_path).resolve()
-
     ensure_directory_exists(parquet_path.parent)
     verify_directory_is_writable(parquet_path.parent)
     assert_path_not_too_long(parquet_path)
@@ -201,9 +176,42 @@ def write_dataframe_to_parquet_file_handle(
 
     if not parquet_path.exists():
         raise FileNotFoundError(f"Parquet file was not created: {parquet_path}")
-
     if parquet_path.stat().st_size == 0:
         raise ValueError(f"Parquet file was created but is empty: {parquet_path}")
+
+
+def build_batch_file_stem(
+    *,
+    cfg: AgentConfig,
+    table_schema: TableSchema,
+    schema_version: int,
+    query_type: str,
+    extra: dict[str, Any] | None,
+) -> str:
+    """
+    Build the Parquet filename stem.
+
+    New multipart transfers pass an explicit ``file_stem`` in metadata.extra so
+    every part has a readable filename such as:
+
+        arex_tq_v3_inc_req_20260610_201233_ab12cd34_part_001_of_005
+
+    If no explicit stem is provided, this function falls back to the original
+    compact naming style.
+    """
+    extra = extra or {}
+    explicit = extra.get("file_stem")
+    if explicit:
+        return safe_path_part(str(explicit), max_length=180)
+
+    table_name_safe = safe_path_part(table_schema.table_name, max_length=60)
+    factory_id_safe = safe_path_part(cfg.factory_id, max_length=40)
+    query_short = short_query_type(query_type)
+    uid = short_uuid()
+    return safe_path_part(
+        f"{factory_id_safe}_{table_name_safe}_v{schema_version}_{query_short}_{uid}",
+        max_length=180,
+    )
 
 
 def write_raw_parquet_batch(
@@ -221,27 +229,25 @@ def write_raw_parquet_batch(
     database_fingerprint: str | None = None,
     extra: dict[str, Any] | None = None,
 ) -> tuple[Path, RawBatchMetadata, Any]:
-    """
-    Write one raw table batch as a Parquet file and return its metadata.
-    """
-    table_name_safe = safe_path_part(table_schema.table_name)
-    factory_id_safe = safe_path_part(cfg.factory_id)
-    query_short = short_query_type(query_type)
-    uid = short_uuid()
-
-    batch_id = f"{factory_id_safe}_{table_name_safe}_{query_short}_{uid}"
-
+    """Write one raw table batch as a Parquet file and return its metadata."""
     output_dir = build_output_dir(
         cfg,
         table_name=table_schema.table_name,
         schema_version=schema_version,
         query_type=query_type,
     )
-
     ensure_directory_exists(output_dir)
     verify_directory_is_writable(output_dir)
 
-    parquet_path = (output_dir / f"{query_short}_{uid}.parquet").resolve()
+    file_stem = build_batch_file_stem(
+        cfg=cfg,
+        table_schema=table_schema,
+        schema_version=schema_version,
+        query_type=query_type,
+        extra=extra,
+    )
+    batch_id = file_stem
+    parquet_path = (output_dir / f"{file_stem}.parquet").resolve()
 
     raw_out = prepare_raw_dataframe(
         df,
@@ -250,20 +256,13 @@ def write_raw_parquet_batch(
         table_name=table_schema.table_name,
         batch_id=batch_id,
     )
-
     write_dataframe_to_parquet_file_handle(
         raw_out,
         parquet_path,
         compression=cfg.compression,
     )
-
     checksum = sha256_file(parquet_path)
-
-    upper_value = (
-        upper_bound
-        if upper_bound is not None
-        else max_value_from_dataframe(df, sync_key)
-    )
+    upper_value = upper_bound if upper_bound is not None else max_value_from_dataframe(df, sync_key)
 
     metadata = RawBatchMetadata(
         factory_id=cfg.factory_id,
@@ -287,23 +286,14 @@ def write_raw_parquet_batch(
         schema_snapshot=table_schema,
         extra=extra or {},
     )
-
     return parquet_path, metadata, upper_value
 
 
 def write_metadata_file(parquet_path: Path, metadata: RawBatchMetadata) -> Path:
-    """
-    Write a JSON metadata file next to the Parquet file.
-    """
+    """Write a JSON metadata file next to the Parquet file."""
     metadata_path = Path(parquet_path).resolve().with_suffix(".metadata.json")
-
     ensure_directory_exists(metadata_path.parent)
     verify_directory_is_writable(metadata_path.parent)
     assert_path_not_too_long(metadata_path)
-
-    metadata_path.write_text(
-        metadata.model_dump_json(indent=2),
-        encoding="utf-8",
-    )
-
+    metadata_path.write_text(metadata.model_dump_json(indent=2), encoding="utf-8")
     return metadata_path

@@ -26,6 +26,26 @@ class SyncDefaults:
 
 
 @dataclass
+class LargeFileTransferConfig:
+    """
+    Settings for robust transfer of very large full-table snapshots.
+
+    full_snapshot_page_size controls how many source rows are written into one
+    Parquet file. A full table snapshot with more rows is exported as multiple
+    parts and completed through a Receiver-side snapshot manifest.
+    """
+
+    enabled: bool = True
+    full_snapshot_page_size: int = 100_000
+    upload_timeout_seconds: int = 600
+    upload_retries: int = 3
+    upload_retry_backoff_seconds: float = 5.0
+    manifest_timeout_seconds: int = 120
+    finalize_timeout_seconds: int = 120
+    incremental_page_size: int = 100_000
+
+
+@dataclass
 class AgentConfig:
     # Internal source identifiers are intentionally not exposed in config.
     # This deployment uses one SQLite database source, so stable internal values
@@ -43,14 +63,11 @@ class AgentConfig:
     include_tables: list[str] = field(default_factory=lambda: ["*"])
     exclude_tables: list[str] = field(default_factory=lambda: ["sqlite_sequence"])
     sync_defaults: SyncDefaults = field(default_factory=SyncDefaults)
+    large_file_transfer: LargeFileTransferConfig = field(default_factory=LargeFileTransferConfig)
 
     @property
     def factory_id(self) -> str:
-        """Stable internal source ID used by Receiver metadata.
-
-        It is not configurable because this deployment has a single SQLite
-        source database.
-        """
+        """Stable internal source ID used by Receiver metadata."""
         return "source_database"
 
     @property
@@ -88,10 +105,21 @@ def _as_list(value: Any, default: list[str]) -> list[str]:
     return [str(value)]
 
 
+def _as_bool(value: Any, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
 def _validate_http_url(name: str, value: str, *, environment: str) -> None:
     parsed = urlparse(value)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-        raise RuntimeError(f"{name} must be a valid HTTP URL, for example http://192.168.10.50:8000. Current value: {value!r}")
+        raise RuntimeError(
+            f"{name} must be a valid HTTP URL, for example http://192.168.10.50:8000. "
+            f"Current value: {value!r}"
+        )
     if environment.lower() in {"prod", "production"}:
         host = (parsed.hostname or "").lower()
         if host in {"localhost", "127.0.0.1", "::1"}:
@@ -125,10 +153,22 @@ def load_config(path: str | Path) -> AgentConfig:
             ["timestamp", "created_at", "time", "datetime", "date"],
         ),
         timestamp_overlap_seconds=int(sync_raw.get("timestamp_overlap_seconds", 300)),
-        full_snapshot_for_new_tables=bool(sync_raw.get("full_snapshot_for_new_tables", True)),
-        full_snapshot_on_sync_key_loss=bool(sync_raw.get("full_snapshot_on_sync_key_loss", True)),
-        full_snapshot_on_database_reset=bool(sync_raw.get("full_snapshot_on_database_reset", True)),
+        full_snapshot_for_new_tables=_as_bool(sync_raw.get("full_snapshot_for_new_tables"), True),
+        full_snapshot_on_sync_key_loss=_as_bool(sync_raw.get("full_snapshot_on_sync_key_loss"), True),
+        full_snapshot_on_database_reset=_as_bool(sync_raw.get("full_snapshot_on_database_reset"), True),
         migration_table_change_ratio=float(sync_raw.get("migration_table_change_ratio", 0.30)),
+    )
+
+    large_raw = raw.get("large_file_transfer") or {}
+    large_file_transfer = LargeFileTransferConfig(
+        enabled=_as_bool(large_raw.get("enabled"), True),
+        full_snapshot_page_size=int(large_raw.get("full_snapshot_page_size", raw.get("batch_max_records", 100_000))),
+        upload_timeout_seconds=int(large_raw.get("upload_timeout_seconds", 600)),
+        upload_retries=int(large_raw.get("upload_retries", 3)),
+        upload_retry_backoff_seconds=float(large_raw.get("upload_retry_backoff_seconds", 5.0)),
+        manifest_timeout_seconds=int(large_raw.get("manifest_timeout_seconds", 120)),
+        finalize_timeout_seconds=int(large_raw.get("finalize_timeout_seconds", 120)),
+        incremental_page_size=int(large_raw.get("incremental_page_size", raw.get("batch_max_records", 100_000))),
     )
 
     sqlite_path = os.environ.get("FACTORY_SQLITE_PATH", str(raw["sqlite_path"])).strip()
@@ -146,8 +186,9 @@ def load_config(path: str | Path) -> AgentConfig:
         environment=environment,
         batch_max_records=int(os.environ.get("AGENT_BATCH_MAX_RECORDS", raw.get("batch_max_records", 100_000))),
         compression=str(os.environ.get("AGENT_COMPRESSION", raw.get("compression", "zstd"))),
-        use_snapshot=bool(raw.get("use_snapshot", True)),
+        use_snapshot=_as_bool(raw.get("use_snapshot"), True),
         include_tables=_as_list(raw.get("include_tables"), ["*"]),
         exclude_tables=_as_list(raw.get("exclude_tables"), ["sqlite_sequence"]),
         sync_defaults=sync_defaults,
+        large_file_transfer=large_file_transfer,
     )

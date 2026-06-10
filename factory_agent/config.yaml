@@ -3,31 +3,21 @@
 # This single configuration file supports both local testing and
 # operational HTTP deployment.
 #
-# Local mode is active by default. For production, comment the local
-# values and uncomment the production examples below, then replace the
-# placeholder IP addresses and paths with your real values.
-#
 # Required environment variables, not stored in this file:
-#   FACTORY_AGENT_API_KEY  Token used by Receiver to call this Agent
-#   RECEIVER_API_KEY       Token used by this Agent to upload data to Receiver
+# FACTORY_AGENT_API_KEY   Token used by Receiver to call this Agent
+# RECEIVER_API_KEY        Token used by this Agent to upload data to Receiver
 #
-# Optional environment overrides:
-#   APP_ENV, FACTORY_SQLITE_PATH, RECEIVER_BASE_URL,
-#   AGENT_OUTPUT_DIR, AGENT_STATE_FILE,
-#   AGENT_BATCH_MAX_RECORDS, AGENT_COMPRESSION
+# Optional environment overrides are still supported for deployment:
+# APP_ENV, FACTORY_SQLITE_PATH, RECEIVER_BASE_URL,
+# AGENT_OUTPUT_DIR, AGENT_STATE_FILE,
+# AGENT_BATCH_MAX_RECORDS, AGENT_COMPRESSION
+# ------------------------------------------------------------
 
-# ------------------------------------------------------------
-# Environment
-# local      = both services run on the same computer
-# production = Factory Agent and Receiver run on different computers
-# ------------------------------------------------------------
 environment: local
 # environment: production
 
 # ------------------------------------------------------------
 # SQLite database path
-# Local: use the test database inside the project.
-# Production: use the real SQLite database path on the factory computer.
 # ------------------------------------------------------------
 sqlite_path: data/fuse_monitoring.db
 # sqlite_path: D:/PATH/TO/FACTORY_DATABASE/fuse_monitoring.db
@@ -43,10 +33,6 @@ state_file: data/agent_state.json
 
 # ------------------------------------------------------------
 # Receiver URL
-# Local: Receiver runs on the same computer.
-# Production: replace this with the real Receiver IP or hostname.
-# Do not use localhost in production because localhost means the factory
-# computer itself, not the university/local Receiver computer.
 # ------------------------------------------------------------
 api_base_url: http://localhost:8000
 # api_base_url: http://192.168.10.50:8000
@@ -54,18 +40,35 @@ api_base_url: http://localhost:8000
 
 # ------------------------------------------------------------
 # Export settings
-# batch_max_records limits the number of rows exported in one operation.
-# compression is used for Parquet files. zstd is efficient and recommended.
-# use_snapshot creates a safe SQLite copy before reading when enabled.
+# batch_max_records is the total row cap for incremental operations when
+# the Receiver/UI does not send max_records_per_table.
+# The size of each Parquet file is controlled separately below:
+# - large_file_transfer.full_snapshot_page_size for full snapshots
+# - large_file_transfer.incremental_page_size for incremental sync
 # ------------------------------------------------------------
 batch_max_records: 100000
 compression: zstd
 use_snapshot: true
 
 # ------------------------------------------------------------
+# Large file transfer policy
+# Full table snapshots are split into multiple Parquet parts and completed
+# through a Receiver-side snapshot manifest.
+# Incremental data is also split into multiple Parquet files when the number
+# of new rows is larger than incremental_page_size.
+# ------------------------------------------------------------
+large_file_transfer:
+  enabled: true
+  full_snapshot_page_size: 100000
+  upload_timeout_seconds: 600
+  upload_retries: 3
+  upload_retry_backoff_seconds: 5
+  manifest_timeout_seconds: 120
+  finalize_timeout_seconds: 120
+  incremental_page_size: 100000
+
+# ------------------------------------------------------------
 # Table selection
-# include_tables: ["*"] means all tables are eligible.
-# exclude_tables prevents internal SQLite tables from being exported.
 # ------------------------------------------------------------
 include_tables:
   - "*"
@@ -74,11 +77,6 @@ exclude_tables:
 
 # ------------------------------------------------------------
 # Sync strategy defaults
-# The Agent automatically chooses a safe strategy per table.
-# id_candidates are preferred for append-only incremental sync.
-# updated_at_candidates are preferred for mutable tables.
-# timestamp_candidates are used when no better sync key exists.
-# timestamp_overlap_seconds reduces the risk of missing close timestamp rows.
 # ------------------------------------------------------------
 sync_defaults:
   id_candidates: [id, ID]

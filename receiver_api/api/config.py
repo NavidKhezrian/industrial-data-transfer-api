@@ -17,6 +17,8 @@ class ReceiverConfig:
     factory_agent_base_url: str
     factory_agent_api_key: str
     environment: str = "local"
+    factory_agent_request_timeout_seconds: int = 600
+    connection_check_timeout_seconds: int = 30
 
 
 def _required_env(name: str) -> str:
@@ -43,7 +45,10 @@ def _env_or_raw(env_name: str, raw: dict[str, Any], raw_key: str, default: str |
 def _validate_http_url(name: str, value: str, *, environment: str) -> None:
     parsed = urlparse(value)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-        raise RuntimeError(f"{name} must be a valid HTTP URL, for example http://192.168.10.20:9000. Current value: {value!r}")
+        raise RuntimeError(
+            f"{name} must be a valid HTTP URL, for example http://192.168.10.20:9000. "
+            f"Current value: {value!r}"
+        )
     if environment.lower() in {"prod", "production"}:
         host = (parsed.hostname or "").lower()
         if host in {"localhost", "127.0.0.1", "::1"}:
@@ -53,27 +58,28 @@ def _validate_http_url(name: str, value: str, *, environment: str) -> None:
             )
 
 
-def load_config(path: str | Path = "config.yaml") -> ReceiverConfig:
-    p = Path(path)
-    if p.exists():
-        raw: dict[str, Any] = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
-    else:
-        raw = {}
-
+def load_config(path: str | Path) -> ReceiverConfig:
+    raw: dict[str, Any] = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
     environment = os.environ.get("APP_ENV", str(raw.get("environment", "local"))).strip() or "local"
+
     factory_agent_base_url = _env_or_raw(
-        "FACTORY_AGENT_BASE_URL",
-        raw,
-        "factory_agent_base_url",
-        "http://localhost:9000",
+        "FACTORY_AGENT_BASE_URL", raw, "factory_agent_base_url", "http://localhost:9000"
     )
     _validate_http_url("FACTORY_AGENT_BASE_URL/factory_agent_base_url", factory_agent_base_url, environment=environment)
 
+    storage_dir = str(os.environ.get("RECEIVER_STORAGE_DIR", raw.get("storage_dir", "storage/raw_parquet")))
+    metadata_db_path = str(os.environ.get("RECEIVER_METADATA_DB", raw.get("metadata_db_path", "storage/metadata.db")))
+
+    Path(storage_dir).mkdir(parents=True, exist_ok=True)
+    Path(metadata_db_path).parent.mkdir(parents=True, exist_ok=True)
+
     return ReceiverConfig(
         api_key=_required_env("RECEIVER_API_KEY"),
-        storage_dir=str(os.environ.get("RECEIVER_STORAGE_DIR", raw.get("storage_dir", "storage/raw_parquet"))),
-        metadata_db_path=str(os.environ.get("RECEIVER_METADATA_DB", raw.get("metadata_db_path", "storage/metadata.db"))),
+        storage_dir=storage_dir,
+        metadata_db_path=metadata_db_path,
         factory_agent_base_url=factory_agent_base_url,
         factory_agent_api_key=_required_env("FACTORY_AGENT_API_KEY"),
         environment=environment,
+        factory_agent_request_timeout_seconds=int(raw.get("factory_agent_request_timeout_seconds", 600)),
+        connection_check_timeout_seconds=int(raw.get("connection_check_timeout_seconds", 30)),
     )

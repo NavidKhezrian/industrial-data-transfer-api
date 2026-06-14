@@ -2,6 +2,16 @@
 
 The Receiver API runs on the receiving side. It provides the browser web application, sends requests to the Factory Agent, receives uploaded Parquet files, verifies them, stores them, and tracks metadata.
 
+In the recommended deployment, the Receiver connects to the Factory Agent through WireGuard.
+
+Example:
+
+```text
+Factory Agent WireGuard address: 10.10.0.2
+Receiver WireGuard address:      10.10.0.3
+WireGuard server address:        10.10.0.1
+```
+
 ## Request methods in the web application
 
 ### Sync New Data
@@ -36,49 +46,21 @@ Use this when only some tables need new data.
 
 It works like `Sync New Data`, but only for the selected tables.
 
-Use it when:
-
-- only specific tables are relevant,
-- you want to reduce transfer time,
-- you want to test one table before syncing everything.
-
 ### Full Refresh Selected Tables
 
 Use this when selected tables must be copied completely.
-
-It requests the full current content of only the selected tables. Large tables are split into numbered part files.
-
-Use it when:
-
-- one table needs to be rebuilt,
-- a table had a schema change,
-- a table needs a fresh full snapshot.
 
 ### Custom Query
 
 Use this to export a controlled subset of one table.
 
-The UI allows selecting columns and filters. Free SQL is not sent directly. This keeps the query safer and easier to validate.
-
-Use it when:
-
-- you need a specific time range,
-- you need specific columns,
-- you need a smaller filtered dataset for analysis.
-
-New Custom Query results store the query definition in metadata. This makes repair possible later if the file is deleted and the source table still exists.
+The UI allows selecting columns and filters. Free SQL is not sent directly.
 
 ### Inspect Schema
 
 Use this to read only table and column information.
 
 No row data is transferred.
-
-Use it when:
-
-- checking available tables,
-- checking columns before creating a custom query,
-- confirming whether a schema changed.
 
 ## Result output
 
@@ -94,8 +76,6 @@ After an operation, the UI shows information such as:
 - storage paths,
 - checksum values,
 - repair or warning messages.
-
-For large transfers, files are grouped by request ID and part number. This makes it clear which files belong to the same transfer request.
 
 ## Storage of received data
 
@@ -147,29 +127,19 @@ It can detect:
 - missing full snapshot parts,
 - files that were manually deleted.
 
-If no files are missing, no warning is displayed.
-
 ## Handling missing files
-
-If registered files are missing, the UI groups them by action.
 
 ### Repair can be tried
 
 These files have enough metadata and the source table appears to exist. Receiver can ask the Factory Agent to recreate them.
 
-Repair does not change the Factory Agent sync state.
-
 ### Run Custom Query again
 
 This applies to older Custom Query files that were created before the full query definition was stored in metadata.
 
-The recommended action is to run the same Custom Query again.
-
 ### Cannot repair automatically
 
 These files cannot be recreated safely from the current source database. A common reason is that the source table no longer exists.
-
-If the file is not needed anymore, the user can ignore it. Ignored missing files are stored in the Receiver metadata database and will not be shown again in future reload status checks.
 
 ## Main files
 
@@ -211,10 +181,13 @@ receiver_api/
 
 Recommended:
 
+- Windows 11
 - Python 3.11 or newer
 - `uv`
-- Network access to the Factory Agent
-- Port `8000` available for the Receiver web application and API
+- WireGuard for Windows
+- Outbound UDP access to the WireGuard server on port `51820`
+- Port `8000` available on the Receiver computer
+- Enough disk space for Parquet storage and metadata
 
 Install `uv` if needed:
 
@@ -229,6 +202,108 @@ cd receiver_api
 uv sync
 ```
 
+## Configure WireGuard on the Receiver computer
+
+### 1. Install WireGuard
+
+Install WireGuard for Windows from the official WireGuard website.
+
+### 2. Create a Receiver tunnel
+
+Open WireGuard and select:
+
+```text
+Add Tunnel
+→ Add empty tunnel
+```
+
+WireGuard creates a private key and shows the corresponding public key.
+
+Keep the private key only on the Receiver computer. Copy the public key to the Ubuntu WireGuard server configuration.
+
+Example Receiver configuration:
+
+```ini
+[Interface]
+PrivateKey = RECEIVER_PRIVATE_KEY
+Address = 10.10.0.3/24
+
+[Peer]
+PublicKey = SERVER_PUBLIC_KEY
+Endpoint = SERVER_PUBLIC_IP:51820
+AllowedIPs = 10.10.0.0/24
+PersistentKeepalive = 25
+```
+
+Replace:
+
+- `RECEIVER_PRIVATE_KEY` with the Receiver private key,
+- `SERVER_PUBLIC_KEY` with the Ubuntu server public key,
+- `SERVER_PUBLIC_IP` with the public IP or DNS name of the WireGuard server.
+
+`AllowedIPs = 10.10.0.0/24` creates a split tunnel. The Receiver keeps using its existing local network and Internet connection normally.
+
+### 3. Add the Receiver public key to the server
+
+The Ubuntu server must contain:
+
+```ini
+[Peer]
+PublicKey = RECEIVER_PUBLIC_KEY
+AllowedIPs = 10.10.0.3/32
+```
+
+Restart WireGuard on the Ubuntu server:
+
+```bash
+sudo systemctl restart wg-quick@wg0
+sudo wg
+```
+
+### 4. Activate the Receiver tunnel
+
+In WireGuard for Windows, select the Receiver tunnel and click:
+
+```text
+Activate
+```
+
+The Ubuntu server should show a recent handshake for the Receiver peer.
+
+### 5. Test Factory connectivity
+
+After the Factory Agent tunnel is also active:
+
+```powershell
+curl.exe http://10.10.0.2:9000
+```
+
+A successful HTTP response confirms that the Receiver can reach the Factory through WireGuard.
+
+A failed ping may only mean that Windows Firewall blocks ICMP. Test the actual TCP port instead:
+
+```powershell
+Test-NetConnection 10.10.0.2 -Port 9000
+```
+
+## Configure Receiver API
+
+Update `config.yaml` so Receiver calls the Factory Agent through its WireGuard address.
+
+Use the actual configuration key used by the project for the Factory Agent base URL. Set its value to:
+
+```yaml
+http://10.10.0.2:9000
+```
+
+For example, if the key is named `factory_agent_url`:
+
+```yaml
+factory_agent_url: http://10.10.0.2:9000
+```
+
+Keep Receiver storage paths on the Receiver computer. The WireGuard server does not store application files.
+
 ## API keys
 
 Two API keys are used:
@@ -238,18 +313,11 @@ Two API keys are used:
 | `RECEIVER_API_KEY` | Used to access Receiver UI/API and by Factory Agent when uploading files. |
 | `FACTORY_AGENT_API_KEY` | Used by Receiver when calling the Factory Agent. |
 
+The same values must be configured on both systems.
 
-Set environment variables in PowerShell:
+## Run locally without WireGuard
 
-```powershell
-$env:APP_ENV="local"
-$env:RECEIVER_API_KEY="paste_receiver_key_here"
-$env:FACTORY_AGENT_API_KEY="paste_factory_agent_key_here"
-```
-
-The `RECEIVER_API_KEY` is the token you enter in the Receiver web UI.
-
-## Run locally for testing
+Use this only when the browser and Receiver API are on the same computer and no remote Factory access is required.
 
 ```powershell
 $env:APP_ENV="local"
@@ -266,7 +334,16 @@ Open:
 http://127.0.0.1:8000
 ```
 
-## Run in production
+## Run through WireGuard
+
+First confirm:
+
+- the Receiver WireGuard tunnel is active,
+- the Receiver has VPN address `10.10.0.3`,
+- the Factory Agent is reachable at `10.10.0.2:9000`,
+- the Factory Agent URL in `config.yaml` uses `10.10.0.2`.
+
+Then run:
 
 ```powershell
 $env:APP_ENV="production"
@@ -274,34 +351,50 @@ $env:RECEIVER_API_KEY="paste_receiver_key_here"
 $env:FACTORY_AGENT_API_KEY="paste_factory_agent_key_here"
 
 cd receiver_api
-uv run uvicorn api.main:app --host 0.0.0.0 --port 8000
+uv sync
+uv run uvicorn api.main:app --host 10.10.0.3 --port 8000
 ```
 
-In production:
-
-- use strong API keys,
-- set the Factory Agent URL correctly in `config.yaml`,
-- protect Receiver access with network rules,
-- expose port `8000` only to trusted users or networks,
-- keep enough disk space for Parquet storage,
-- back up the Receiver storage and metadata database.
-
-Open:
+Open the UI on the Receiver computer:
 
 ```text
-http://<system-ip-address>:8000
+http://10.10.0.3:8000
 ```
 
-## Firewall example for port 8000
+The Factory Agent uploads files to:
 
-Windows PowerShell as Administrator:
+```text
+http://10.10.0.3:8000
+```
+
+Binding specifically to `10.10.0.3` prevents Receiver from listening on every local network interface.
+
+## Windows Firewall rule for Receiver API
+
+Run PowerShell as Administrator:
 
 ```powershell
 New-NetFirewallRule `
-  -DisplayName "Receiver API 8000" `
+  -DisplayName "Receiver API 8000 from WireGuard" `
   -Direction Inbound `
   -Action Allow `
   -Protocol TCP `
-  -LocalPort 8000
+  -LocalPort 8000 `
+  -RemoteAddress 10.10.0.2
 ```
 
+This permits port `8000` only from the Factory VPN address.
+
+If the web UI must also be opened from another trusted local computer, create an additional restricted firewall rule for that local IP or subnet. Do not expose port `8000` to the public Internet.
+
+Verify locally:
+
+```powershell
+Test-NetConnection 10.10.0.3 -Port 8000
+```
+
+From the Factory computer:
+
+```powershell
+curl.exe http://10.10.0.3:8000
+```

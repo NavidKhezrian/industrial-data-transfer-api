@@ -1,27 +1,10 @@
 # Factory Agent configuration
-# ------------------------------------------------------------
-# This single configuration file supports both local testing and
-# operational HTTP deployment.
-#
-# Required environment variables, not stored in this file:
-# FACTORY_AGENT_API_KEY   Token used by Receiver to call this Agent
-# RECEIVER_API_KEY        Token used by this Agent to upload data to Receiver
-#
-# Optional environment overrides are still supported for deployment:
-# APP_ENV, FACTORY_SQLITE_PATH, RECEIVER_BASE_URL,
-# AGENT_OUTPUT_DIR, AGENT_STATE_FILE,
-# AGENT_BATCH_MAX_RECORDS, AGENT_COMPRESSION
-# ------------------------------------------------------------
-
-environment: local
-# environment: production
 
 # ------------------------------------------------------------
 # SQLite database path
 # ------------------------------------------------------------
 sqlite_path: data/fuse_monitoring.db
 # sqlite_path: D:/PATH/TO/FACTORY_DATABASE/fuse_monitoring.db
-# sqlite_path: /opt/factory/data/fuse_monitoring.db
 
 # ------------------------------------------------------------
 # Local Agent output
@@ -35,8 +18,7 @@ state_file: data/agent_state.json
 # Receiver URL
 # ------------------------------------------------------------
 api_base_url: http://localhost:8000
-# api_base_url: http://192.168.10.50:8000
-# api_base_url: http://receiver-hostname:8000
+# api_base_url: http://10.10.0.3:8000
 
 # ------------------------------------------------------------
 # Export settings

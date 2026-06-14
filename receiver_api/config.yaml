@@ -1,18 +1,5 @@
 # Receiver API configuration
 # ------------------------------------------------------------
-# Required environment variables, not stored in this file:
-# RECEIVER_API_KEY       Token used by UI users and Factory Agent uploads
-# FACTORY_AGENT_API_KEY  Token used by Receiver to call the Factory Agent
-#
-# Optional environment overrides are still supported:
-# APP_ENV, RECEIVER_STORAGE_DIR, RECEIVER_METADATA_DB,
-# FACTORY_AGENT_BASE_URL
-# ------------------------------------------------------------
-
-environment: local
-# environment: production
-
-# ------------------------------------------------------------
 # Receiver storage
 # This is where accepted Parquet files and metadata are stored on the
 # Receiver computer.
@@ -21,15 +8,12 @@ storage_dir: storage/raw_parquet
 metadata_db_path: storage/metadata.db
 # storage_dir: D:/DATA/industrial_transfer/raw_parquet
 # metadata_db_path: D:/DATA/industrial_transfer/metadata.db
-# storage_dir: /data/industrial_transfer/raw_parquet
-# metadata_db_path: /data/industrial_transfer/metadata.db
 
 # ------------------------------------------------------------
 # Factory Agent URL
 # ------------------------------------------------------------
 factory_agent_base_url: http://localhost:9000
-# factory_agent_base_url: http://192.168.10.20:9000
-# factory_agent_base_url: http://factory-agent-hostname:9000
+# factory_agent_base_url: http://10.10.0.2:9000
 
 # ------------------------------------------------------------
 # Request timeout settings

@@ -2,6 +2,17 @@
 
 The Factory Agent runs on the factory computer that has access to the SQLite database. Its job is to read the database safely, prepare the requested data, convert it to transferable files, and upload those files to the Receiver API.
 
+In the recommended deployment, the Factory computer connects to the Receiver through a WireGuard VPN.
+
+Example:
+
+```text
+Factory local network address: unchanged
+Factory WireGuard address:     10.10.0.2
+Receiver WireGuard address:    10.10.0.3
+WireGuard server address:      10.10.0.1
+```
+
 ## What happens on the Factory Agent side
 
 When the Receiver sends a request, the Factory Agent performs these steps:
@@ -69,8 +80,6 @@ messungen_v3_inc_req_20260611_101500_ab12cd34_part_004_of_005.parquet
 messungen_v3_inc_req_20260611_101500_ab12cd34_part_005_of_005.parquet
 ```
 
-This makes it clear which files belong to the same request, which table they belong to, whether the transfer was incremental or full, and which part number each file has.
-
 Important configuration values:
 
 ```yaml
@@ -88,14 +97,13 @@ large_file_transfer:
 | `incremental_page_size` | Maximum number of rows inside each Parquet part for incremental exports. |
 | `full_snapshot_page_size` | Maximum number of rows inside each Parquet part for full exports. |
 
-
 If more new rows exist than `batch_max_records`, only up to that limit is sent in the current `Sync New Data` request. The remaining rows are sent in later sync requests.
 
 ## File verification
 
 For every Parquet file, the Factory Agent calculates a SHA256 checksum. The checksum is included in the metadata and sent to the Receiver.
 
-The Receiver calculates the checksum again after upload. If the checksum does not match, the file is rejected. The Factory Agent automatically retries the upload according to its retry settings, but if all retries fail, the transfer is not considered successful and the user must rerun the request or use the repair workflow. This prevents corrupted or incomplete files from being accepted.
+The Receiver calculates the checksum again after upload. If the checksum does not match, the file is rejected. The Factory Agent automatically retries the upload according to its retry settings, but if all retries fail, the transfer is not considered successful and the user must rerun the request or use the repair workflow.
 
 ## Sync state
 
@@ -112,8 +120,6 @@ This file stores information such as:
 - schema version,
 - previous full snapshot fingerprint,
 - transfer events.
-
-The state is used so `Sync New Data` does not resend rows that were already transferred.
 
 Repair operations do not move the sync state forward. They only recreate missing files when possible.
 
@@ -154,11 +160,13 @@ factory_agent/
 
 Recommended:
 
+- Windows 11
 - Python 3.11 or newer
 - `uv`
+- WireGuard for Windows
 - Access to the SQLite database file
-- Network access from Factory Agent to Receiver API
-- Port `9000` open if Receiver must call Factory Agent over the network
+- Outbound UDP access to the WireGuard server on port `51820`
+- Port `9000` available on the Factory computer
 
 Install `uv` if needed:
 
@@ -171,6 +179,106 @@ Install project dependencies:
 ```powershell
 cd factory_agent
 uv sync
+```
+
+## Configure WireGuard on the Factory computer
+
+### 1. Install WireGuard
+
+Install WireGuard for Windows from the official WireGuard website.
+
+### 2. Create a Factory tunnel
+
+Open WireGuard and select:
+
+```text
+Add Tunnel
+→ Add empty tunnel
+```
+
+WireGuard creates a private key and shows the corresponding public key.
+
+Keep the private key only on the Factory computer. Copy the public key to the Ubuntu WireGuard server configuration.
+
+Example Factory configuration:
+
+```ini
+[Interface]
+PrivateKey = FACTORY_PRIVATE_KEY
+Address = 10.10.0.2/24
+
+[Peer]
+PublicKey = SERVER_PUBLIC_KEY
+Endpoint = SERVER_PUBLIC_IP:51820
+AllowedIPs = 10.10.0.0/24
+PersistentKeepalive = 25
+```
+
+Replace:
+
+- `FACTORY_PRIVATE_KEY` with the Factory private key,
+- `SERVER_PUBLIC_KEY` with the Ubuntu server public key,
+- `SERVER_PUBLIC_IP` with the public IP or DNS name of the WireGuard server.
+
+`AllowedIPs = 10.10.0.0/24` creates a split tunnel. Only VPN traffic uses WireGuard. The Factory computer keeps using its existing local network for factory devices, PLCs, Modbus devices, and Internet access.
+
+### 3. Add the Factory public key to the server
+
+The Ubuntu server must contain:
+
+```ini
+[Peer]
+PublicKey = FACTORY_PUBLIC_KEY
+AllowedIPs = 10.10.0.2/32
+```
+
+Restart WireGuard on the Ubuntu server:
+
+```bash
+sudo systemctl restart wg-quick@wg0
+sudo wg
+```
+
+### 4. Activate the Factory tunnel
+
+In WireGuard for Windows, select the Factory tunnel and click:
+
+```text
+Activate
+```
+
+The tunnel should show transferred bytes. On the Ubuntu server, `sudo wg` should show a recent handshake.
+
+### 5. Test Receiver connectivity
+
+After the Receiver tunnel is also active:
+
+```powershell
+curl.exe http://10.10.0.3:8000
+```
+
+A successful HTTP response confirms that the Factory can reach the Receiver through WireGuard.
+
+A failed ping does not necessarily indicate a VPN failure because Windows Firewall may block ICMP. An HTTP test is more useful.
+
+## Configure Factory Agent
+
+Update `config.yaml` so the Agent uploads to the Receiver WireGuard address:
+
+```yaml
+api_base_url: http://10.10.0.3:8000
+```
+
+Also set the real SQLite database path:
+
+```yaml
+sqlite_path: D:/path/to/fuse_monitoring.db
+```
+
+Recommended production setting:
+
+```yaml
+use_snapshot: true
 ```
 
 ## API keys
@@ -188,15 +296,11 @@ Create a strong key with Python:
 python -c "import secrets; print(secrets.token_urlsafe(32))"
 ```
 
-Set environment variables in PowerShell:
+The same key values must be configured on both systems.
 
-```powershell
-$env:APP_ENV="local"
-$env:RECEIVER_API_KEY="paste_receiver_key_here"
-$env:FACTORY_AGENT_API_KEY="paste_factory_agent_key_here"
-```
+## Run locally without WireGuard
 
-## Run locally for testing
+Use this only when Agent and Receiver are on the same machine or directly reachable local network.
 
 ```powershell
 $env:APP_ENV="local"
@@ -204,12 +308,19 @@ $env:RECEIVER_API_KEY="paste_receiver_key_here"
 $env:FACTORY_AGENT_API_KEY="paste_factory_agent_key_here"
 
 cd factory_agent
-uv run python -m agent.main --mode server --config config.yaml --host 0.0.0.0 --port 9000
+uv run python -m agent.main --mode server --config config.yaml --host 127.0.0.1 --port 9000
 ```
 
-Use local mode for development, local database testing, and running Agent and Receiver on the same machine or local network.
+## Run through WireGuard
 
-## Run in production
+First confirm:
+
+- the Factory WireGuard tunnel is active,
+- the Factory has VPN address `10.10.0.2`,
+- the Receiver is reachable at `10.10.0.3`,
+- `api_base_url` is set to `http://10.10.0.3:8000`.
+
+Then run:
 
 ```powershell
 $env:APP_ENV="production"
@@ -217,29 +328,37 @@ $env:RECEIVER_API_KEY="paste_receiver_key_here"
 $env:FACTORY_AGENT_API_KEY="paste_factory_agent_key_here"
 
 cd factory_agent
-uv run python -m agent.main --mode server --config config.yaml --host 0.0.0.0 --port 9000
+uv sync
+uv run python -m agent.main --mode server --config config.yaml --host 10.10.0.2 --port 9000
 ```
 
-In production:
 
-- set `sqlite_path` to the real factory SQLite database,
-- set `api_base_url` to the Receiver API address,
-- use strong API keys,
-- keep `use_snapshot: true`,
-- configure firewall rules,
-- restrict access to port `9000` to trusted Receiver IP addresses.
+## Windows Firewall rule for Factory Agent
 
-## Firewall example for port 9000
-
-Windows PowerShell as Administrator:
+Run PowerShell as Administrator:
 
 ```powershell
 New-NetFirewallRule `
-  -DisplayName "Factory Agent API 9000" `
+  -DisplayName "Factory Agent API 9000 from WireGuard" `
   -Direction Inbound `
   -Action Allow `
   -Protocol TCP `
-  -LocalPort 9000
+  -LocalPort 9000 `
+  -RemoteAddress 10.10.0.3
+```
+
+This permits port `9000` only from the Receiver VPN address.
+
+Verify the port after starting the Agent:
+
+```powershell
+Test-NetConnection 10.10.0.2 -Port 9000
+```
+
+From the Receiver, test:
+
+```powershell
+curl.exe http://10.10.0.2:9000
 ```
 
 

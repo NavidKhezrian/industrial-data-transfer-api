@@ -416,10 +416,10 @@ After the first installation, the administrator must add the Factory public key 
 PLEASE_SEND_THIS_FILE_TO_US.txt
 ```
 
-to the Ubuntu WireGuard server configuration, typically:
+to the WireGuard server configuration, typically:
 
 ```text
-/etc/wireguard/wg0.conf
+nano /etc/wireguard/wg0.conf
 ```
 
 Example server-side peer entry:
@@ -440,45 +440,76 @@ sudo wg
 A successful connection should show a recent handshake for the Factory peer.
 
 
-## Uninstall / Rollback Notes
+## Uninstall 
 
-If rollback is required, IT can run PowerShell as Administrator and use the commands below.
+If a rollback is required, IT should run PowerShell as Administrator and follow the steps below.
 
-### Stop running components
+### 1. Stop running Factory Agent processes
 
-```powershell
-Stop-ScheduledTask -TaskName 'IndustrialDataTransfer-FactoryAgent' -ErrorAction SilentlyContinue
-```
-
-Stops the Factory Agent Scheduled Task, if it exists.
+Stop any running process related to the Industrial Data Transfer application:
 
 ```powershell
-Stop-Service 'WireGuardTunnel$factory-agent' -ErrorAction SilentlyContinue
+Get-CimInstance Win32_Process |
+Where-Object { $_.CommandLine -like "*industrial-data-transfer-api*" -or $_.CommandLine -like "*uvicorn*" } |
+ForEach-Object {
+    Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
+}
 ```
 
-Stops the WireGuard tunnel service, if it is running.
+### 2. Check whether port 9000 is still in use
 
-### Remove installed Windows components
+After stopping the application processes, check whether any process is still listening on port `9000`:
 
 ```powershell
-Unregister-ScheduledTask -TaskName 'IndustrialDataTransfer-FactoryAgent' -Confirm:$false -ErrorAction SilentlyContinue
+netstat -ano | findstr ":9000"
 ```
-Removes the WireGuard tunnel service named `factory-agent`.
+
+If the command returns a result, check the last number in the line. This number is the process ID, also called PID.
+
+Example output:
+
+```text
+TCP    10.10.0.2:9000    0.0.0.0:0    LISTENING    14552
+```
+
+In this example, the PID is `14552`.
+
+Stop that process with:
 
 ```powershell
-Remove-NetFirewallRule -DisplayName 'Factory Agent API 9000 from WireGuard' -ErrorAction SilentlyContinue
+Stop-Process -Id 14552 -Force
 ```
 
-Removes the inbound firewall rule for the Factory Agent API on TCP port `9000`.
+
+### 3. Remove the WireGuard tunnel service
+
+Remove the Factory WireGuard tunnel service if it exists:
 
 ```powershell
-Remove-NetFirewallRule -DisplayName 'WireGuard to Public Server UDP 51820' -ErrorAction SilentlyContinue
+$wireGuardExe = "$env:ProgramFiles\WireGuard\wireguard.exe"
+$tunnelName = "factory-agent"
+
+if (Test-Path $wireGuardExe) {
+    & $wireGuardExe /uninstalltunnelservice $tunnelName
+}
 ```
 
-Removes the outbound firewall rule for WireGuard traffic to the public server on UDP port `51820`.
+### 4. Remove Windows Firewall rules
 
-### Installation folder
+Remove the firewall rules created for the Factory Agent:
 
-After these steps, the installation folder selected during setup can be deleted manually if it is no longer needed.
+```powershell
+Get-NetFirewallRule -DisplayName "Factory Agent API 9000 from WireGuard" -ErrorAction SilentlyContinue |
+Remove-NetFirewallRule
+
+Get-NetFirewallRule -DisplayName "WireGuard to Public Server UDP 51820" -ErrorAction SilentlyContinue |
+Remove-NetFirewallRule
+```
+
+### 5. Installation folder
+
+After the steps above are completed, the installation folder created during setup can be deleted manually if it is no longer needed.
+
+
 
 
